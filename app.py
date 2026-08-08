@@ -6,97 +6,59 @@ from firebase_admin import credentials, firestore
 from google.api_core.exceptions import ResourceExhausted
 
 # --- CONFIGURACIÓN E INICIALIZACIÓN DE FIREBASE ---
-#PATH_DATA = "/content/"
-#FIREBASE_CREDENTIALS_FILE = PATH_DATA + "reto-movies-firebase-adminsdk-fbsvc-b973f457ad.json"
-
 @st.cache_resource
 def init_firebase():
     if not firebase_admin._apps:
-        # Carga las credenciales desde los Secrets de Streamlit
         firebase_config = dict(st.secrets["firebase"])
-        # En caso de que las llaves privadas tengan saltos de línea escapados
         if "private_key" in firebase_config:
             firebase_config["private_key"] = firebase_config["private_key"].replace("\\n", "\n")
-            
         cred = credentials.Certificate(firebase_config)
         firebase_admin.initialize_app(cred)
     return firestore.client()
 
 db = init_firebase()
 
-# --- FUNCIÓN DE CARGA OPTIMIZADA CON CACHÉ ---
-DATE_COLUMN = 'name'
-
+# --- CARGA DE DATOS DESDE FIRESTORE ---
 @st.cache_data
 def load_data():
-    try:
-        docs = db.collection(u'movies').stream()
-        data_dict = [doc.to_dict() for doc in docs]
-        return pd.DataFrame(data_dict)
-    except ResourceExhausted:
-        st.error("Se ha alcanzado la cuota diaria de lectura en Firestore.")
-        return pd.DataFrame(columns=['name', 'company', 'director', 'genre'])
+    movies_ref = db.collection(u'movies')
+    docs = movies_ref.stream()
+    movies_list = [doc.to_dict() for doc in docs]
+    return pd.DataFrame(movies_list)
 
-# Carga inicial de datos
-data_load_state = st.text('Loading movies data...')
 data = load_data()
-data_load_state.text("Done! (using st.cache)")
+
+# Listas para los filtros y selectbox
+companies_list = sorted(data['company'].dropna().unique().tolist()) if 'company' in data.columns else []
+directors_list = sorted(data['director'].dropna().unique().tolist()) if 'director' in data.columns else []
+genres_list = sorted(data['genre'].dropna().unique().tolist()) if 'genre' in data.columns else []
+directors_form_list = directors_list.copy()
 
 # --- INTERFAZ PRINCIPAL ---
-st.title('Film Navigator')
+st.title("Film Navigator")
 
-# 1. Checkbox en sidebar para mostrar todos los filmes
-if st.sidebar.checkbox('Mostrar todos los filmes'):
-    st.subheader('Todos los filmes')
-    st.dataframe(data)
+# Checkbox para mostrar todos los filmes
+sidebar_show_all = st.sidebar.checkbox("Mostrar todos los filmes", value=True)
 
-# 2. Búsqueda de filmes por título
+# Filtro por Título
 st.sidebar.subheader("Buscar filmes por título")
-with st.sidebar.form("search_form"):
-    title_query = st.text_input("Titulo del filme :")
-    search_submitted = st.form_submit_button("Buscar filmes")
+search_title = st.sidebar.text_input("Titulo del filme:", key="search_title_input")
+btn_search_title = st.sidebar.button("Buscar filmes")
 
-if search_submitted:
-    if title_query.strip():
-        filtered_title = data[data['name'].astype(str).str.contains(title_query, case=False, na=False)]
-        st.subheader('Resultados de búsqueda')
-        st.write(f"Total filmes mostrados : {len(filtered_title)}")
-        st.dataframe(filtered_title)
-    else:
-        st.warning("Por favor, ingresa un título para buscar.")
-
-# 3. Selectbox para filtrar por Director
+# Filtro por Director
 st.sidebar.subheader("Seleccionar Director")
-if 'director' in data.columns and not data.empty:
-    directors_list = sorted(data['director'].dropna().unique().tolist())
-    selected_director = st.sidebar.selectbox("Seleccionar Director", directors_list)
-    if st.sidebar.button("Filtrar director"):
-        filtered_director = data[data['director'] == selected_director]
-        st.subheader(f'Filmes dirigidos por {selected_director}')
-        st.write(f"Total filmes : {len(filtered_director)}")
-        st.dataframe(filtered_director)
+selected_director = st.sidebar.selectbox("Seleccionar Director", directors_list if directors_list else ["Sin directores"])
+btn_search_director = st.sidebar.button("Filtrar director")
 
-# --- INICIALIZACIÓN Y CONTROL DEL ESTADO EN SESSION STATE ---
-if "new_movie_name" not in st.session_state:
-    st.session_state["new_movie_name"] = ""
-
-# Mostrar mensaje de éxito si se agregó un filme en el render anterior
-if "success_msg" in st.session_state:
-    st.sidebar.success(st.session_state["success_msg"])
-    del st.session_state["success_msg"]
-
-# Opciones para listas de selección
-companies_list = sorted(data['company'].dropna().unique().tolist()) if 'company' in data.columns and not data.empty else ["Independent"]
-directors_form_list = sorted(data['director'].dropna().unique().tolist()) if 'director' in data.columns and not data.empty else ["Unknown"]
-genres_list = sorted(data['genre'].dropna().unique().tolist()) if 'genre' in data.columns and not data.empty else ["Drama"]
-
-# 4. Formulario para insertar un nuevo filme desde el Sidebar
+# --- FORMULARIO PARA CREAR NUEVO FILME ---
 st.sidebar.subheader("Nuevo filme")
-with st.sidebar.form("nuevo_filme_form"):
-    new_name = st.text_input("Name:", value=st.session_state["new_movie_name"], key="new_movie_name")
-    new_company = st.selectbox("Company", companies_list, key="new_company_key")
-    new_director = st.selectbox("Director", directors_form_list, key="new_director_key")
-    new_genre = st.selectbox("Genre", genres_list, key="new_genre_key")
+
+# clear_on_submit=True limpia los campos automáticamente al enviar sin tocar st.session_state
+with st.sidebar.form("nuevo_filme_form", clear_on_submit=True):
+    new_name = st.text_input("Name:")
+    new_company = st.selectbox("Company", companies_list)
+    new_director = st.selectbox("Director", directors_form_list)
+    new_genre = st.selectbox("Genre", genres_list)
     
     submit_button = st.form_submit_button(label="Crear nuevo filme")
     
@@ -118,17 +80,30 @@ with st.sidebar.form("nuevo_filme_form"):
                 try:
                     doc_ref.set(new_data)
                     st.cache_data.clear()
-                    
-                    # Restablecer valores de forma segura asignando la primera opción de cada lista
-                    st.session_state["new_movie_name"] = ""
-                    st.session_state["new_company_key"] = companies_list[0]
-                    st.session_state["new_director_key"] = directors_form_list[0]
-                    st.session_state["new_genre_key"] = genres_list[0]
-
                     st.session_state["success_msg"] = f"¡Filme '{clean_name}' agregado exitosamente!"
-                    
                     st.rerun()
                 except ResourceExhausted:
                     st.sidebar.error("No se pudo agregar: la cuota diaria de Firestore ha sido excedida.")
         else:
             st.sidebar.error("El nombre del filme no puede estar vacío.")
+
+# Mostrar mensaje de éxito si existe en el estado
+if "success_msg" in st.session_state:
+    st.success(st.session_state["success_msg"])
+    del st.session_state["success_msg"]
+
+# --- MOSTRAR RESULTADOS ---
+if btn_search_title and search_title:
+    filtered_data = data[data['name'].astype(str).str.contains(search_title, case=False, na=False)]
+    st.subheader(f"Filmes que contienen: '{search_title}'")
+    st.write(f"Total encontrado: {len(filtered_data)}")
+    st.dataframe(filtered_data)
+elif btn_search_director and selected_director:
+    filtered_data = data[data['director'] == selected_director]
+    st.subheader(f"Filmes dirigidos por: '{selected_director}'")
+    st.write(f"Total encontrado: {len(filtered_data)}")
+    st.dataframe(filtered_data)
+elif sidebar_show_all:
+    st.subheader("Todos los filmes")
+    st.write(f"Total de filmes: {len(data)}")
+    st.dataframe(data)
