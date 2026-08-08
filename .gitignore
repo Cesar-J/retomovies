@@ -216,3 +216,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+# --- REGLAS PERSONALIZADAS DEL PROYECTO ---
+# Credenciales y archivos JSON sensibles (Firebase)
+*.json
+
+# Configuración local y secretos de Streamlit
+.streamlit/secrets.toml
+
+# Variables de entorno locales
+.env
