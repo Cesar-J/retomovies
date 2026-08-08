@@ -40,10 +40,11 @@ st.title("Film Navigator")
 # Checkbox para mostrar todos los filmes
 sidebar_show_all = st.sidebar.checkbox("Mostrar todos los filmes", value=True)
 
-# Filtro por Título
+# Filtro por Título (Envuelto en formulario para que funcione con Enter y Clic)
 st.sidebar.subheader("Buscar filmes por título")
-search_title = st.sidebar.text_input("Titulo del filme:", key="search_title_input")
-btn_search_title = st.sidebar.button("Buscar filmes")
+with st.sidebar.form("form_search_title"):
+    search_title = st.text_input("Titulo del filme:", key="search_title_input")
+    btn_search_title = st.form_submit_button("Buscar filmes")
 
 # Filtro por Director
 st.sidebar.subheader("Seleccionar Director")
